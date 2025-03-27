@@ -86,3 +86,25 @@ def _get_original_webshop_data(query_args):
 @frappe.whitelist(allow_guest=True)
 def get_guest_redirect_on_action():
     return frappe.db.get_single_value("Webshop Settings", "redirect_on_action")
+
+@frappe.whitelist()
+def search_customer():
+    """Search customers by name or phone number."""
+    phone_number = frappe.form_dict.get("phone_number")
+
+    if not phone_number:
+        return {"error": "Phone number is required"}
+
+    try:
+        customers = frappe.db.sql("""
+            SELECT name, customer_name, mobile_no FROM `tabCustomer`
+            WHERE customer_name LIKE %(phone_number)s OR mobile_no LIKE %(phone_number)s
+            LIMIT 1
+        """, {"phone_number": f"%{phone_number}%"}, as_dict=True)
+
+        if customers:
+            return customers[0]
+        else:
+            return {"error": "Customer not found"}
+    except Exception as e:
+        return {"error": "An unexpected error occurred"}
