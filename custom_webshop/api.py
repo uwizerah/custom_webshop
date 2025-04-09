@@ -147,7 +147,7 @@ def create_customer(name, phone):
         frappe.log_error(frappe.get_traceback(), "create_customer error")
         return {"error": "An unexpected error occurred. Please try again."}
 
-@frappe_whitelist()
+@frappe.whitelist()
 def set_customer_phone(phone):
     frappe.session['customer_phone'] = phone
     return {"success": True}
@@ -170,7 +170,7 @@ def custom_place_order(phone=None):
 
     quotation.customer = customer_name
     quotation.party_name = customer_name
-    
+
     cart_settings = get_shopping_cart_settings()
     quotation.company = cart_settings.company
 
