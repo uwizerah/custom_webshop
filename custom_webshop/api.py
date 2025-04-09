@@ -103,8 +103,123 @@ def search_customer():
         """, {"phone_number": f"%{phone_number}%"}, as_dict=True)
 
         if customers:
+            frappe.session['customer_phone'] = phone_number
             return customers[0]
         else:
             return {"error": "Customer not found"}
     except Exception as e:
         return {"error": "An unexpected error occurred"}
+
+@frappe.whitelist()
+def create_customer(name, phone):
+    """Create a new customer with name and phone."""
+    if not name or not phone:
+        return {"error": "Name and phone are required"}
+
+    try:
+        # Check if a customer already exists with this phone
+        existing = frappe.db.get_value("Customer", {"mobile_no": phone}, ["name", "customer_name", "mobile_no"], as_dict=True)
+        if existing:
+            return existing  # Return the already existing customer
+
+        # Create the new customer
+        new_customer = frappe.get_doc({
+            "doctype": "Customer",
+            "customer_name": name,
+            "customer_type": "Individual",
+            "mobile_no": phone,
+            "customer_group": "Individual",
+            "territory": frappe.db.get_value("Territory", {"is_group": 0}, "name") or "All Territories"
+        })
+        new_customer.insert(ignore_permissions=True)
+        new_customer.save()
+
+        frappe.session['customer_phone'] = phone  # Store the phone in session
+        frappe.session['customer_name'] = name  # Store the name in session
+
+        return {
+            "customer_name": new_customer.customer_name,
+            "mobile_no": new_customer.mobile_no,
+            "name": new_customer.name
+        }
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "create_customer error")
+        return {"error": "An unexpected error occurred. Please try again."}
+
+@frappe_whitelist()
+def set_customer_phone(phone):
+    frappe.session['customer_phone'] = phone
+    return {"success": True}
+
+@frappe.whitelist()
+def custom_place_order(phone=None):
+    from webshop.webshop.shopping_cart.cart import _make_sales_order, _get_cart_quotation, get_shopping_cart_settings
+    from webshop.webshop.utils.product import get_web_item_qty_in_stock
+    from frappe import _
+
+    if not phone:
+        frappe.throw("Customer phone number is required.")
+
+    customer_name = frappe.get_value("Customer", {"mobile_no": phone})
+    if not customer_name:
+        frappe.throw("Customer with phone number not found.")
+
+    party = frappe.get_doc("Customer", customer_name)
+    quotation = _custom_get_cart_quotation()
+
+    quotation.customer = customer_name
+    quotation.party_name = customer_name
+    
+    cart_settings = get_shopping_cart_settings()
+    quotation.company = cart_settings.company
+
+        # 👇 Make sure the cart isn't empty
+    if not quotation.items:
+        frappe.throw("Your cart is empty. Please add items before requesting a quote.")
+
+    quotation.flags.ignore_permissions = True
+    quotation.run_method("calculate_taxes_and_totals")
+    quotation.save()  # 📝 Just save, don’t submit
+
+    return quotation.name
+
+
+def _custom_get_cart_quotation():
+    from webshop.webshop.shopping_cart.cart import get_shopping_cart_settings
+
+    # Get the logged-in user's cart — NOT the customer's
+    quotation = frappe.get_all(
+        "Quotation",
+        fields=["name"],
+        filters={
+            "contact_email": frappe.session.user,
+            "order_type": "Shopping Cart",
+            "docstatus": 0,
+        },
+        order_by="modified desc",
+        limit_page_length=1,
+    )
+
+    if quotation:
+        qdoc = frappe.get_doc("Quotation", quotation[0].name)
+    else:
+        company = frappe.db.get_value("E Commerce Settings", None, ["company"])
+        qdoc = frappe.get_doc({
+            "doctype": "Quotation",
+            "naming_series": get_shopping_cart_settings().quotation_series or "QTN-CART-",
+            "quotation_to": "Customer",  # Defaults to Customer, update later
+            "company": company,
+            "order_type": "Shopping Cart",
+            "status": "Draft",
+            "docstatus": 0,
+            "__islocal": 1,
+        })
+
+        qdoc.contact_person = frappe.db.get_value("Contact", {"email_id": frappe.session.user})
+        qdoc.contact_email = frappe.session.user
+
+        qdoc.flags.ignore_permissions = True
+        qdoc.run_method("set_missing_values")
+
+    return qdoc
