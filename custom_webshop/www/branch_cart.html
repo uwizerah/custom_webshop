@@ -97,9 +97,13 @@
                     <div class="payment-summary">
                         {% include "templates/includes/cart/cart_payment_summary.html" %}
                     </div>
-
-                    <div class="place-order">
+                    <!-- <div class="place-order">
                         {% include "templates/includes/cart/place_order.html" %}
+                    </div> -->
+                    <div class="place-order">
+                        <button class="btn btn-primary place-order-button">
+                            {{ _('Place Order') }}
+                        </button>
                     </div>
                 </div>
                 <div class="customer-info">
