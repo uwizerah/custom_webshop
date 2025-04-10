@@ -170,6 +170,8 @@ def custom_place_order(phone=None):
 
     quotation.customer = customer_name
     quotation.party_name = customer_name
+    quotation.billing_address = None
+    quotation.shipping_address = None
 
     cart_settings = get_shopping_cart_settings()
     quotation.company = cart_settings.company
