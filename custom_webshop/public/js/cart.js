@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 args: { phone: phone },
                 callback: function(response) {
                     if(!response.exc && response.message) {
-                        window.location.href = `/quotation/${response.message}`;
+                        window.location.href = `/orders/${response.message}`;
                     } else {
                         frappe.msgprint(__('Error placing order. Please try again.'));
                     }

@@ -1,6 +1,8 @@
 import json
 import frappe
 from frappe.utils import cint
+from frappe.utils import nowdate
+from frappe.utils import get_fullname
 from webshop.webshop.product_data_engine.filters import ProductFiltersBuilder
 from webshop.webshop.product_data_engine.query import ProductQuery
 from webshop.webshop.doctype.override_doctype.item_group import get_child_groups_for_website
@@ -103,8 +105,13 @@ def search_customer():
         """, {"phone_number": f"%{phone_number}%"}, as_dict=True)
 
         if customers:
-            frappe.session['customer_phone'] = phone_number
-            return customers[0]
+            customer = customers[0]
+            frappe.session['customer_phone'] = customer.mobile_no
+            frappe.session['customer_name'] = customer.customer_name
+            frappe.session['branch_operator_email'] = frappe.session.user
+            frappe.session['branch_operator_name'] = frappe.db.get_value("User", frappe.session.user, "full_name")
+
+            return customer
         else:
             return {"error": "Customer not found"}
     except Exception as e:
@@ -134,8 +141,41 @@ def create_customer(name, phone):
         new_customer.insert(ignore_permissions=True)
         new_customer.save()
 
+        bo_email = frappe.session.user
+        bo_fullname = frappe.db.get_value("User", bo_email, "full_name")
+
+        # First try finding by email
+        bo_customer = frappe.db.get_value("Customer", {"email_id": bo_email}, "name")
+
+        # Fallback: try finding by full name
+        if not bo_customer:
+            bo_customer = frappe.db.get_value("Customer", {"customer_name": bo_fullname}, "name")
+
+        # Now try to get the address
+        bo_address_name = None
+        if bo_customer:
+            bo_address_name = frappe.db.get_value("Dynamic Link", {
+                "link_doctype": "Customer",
+                "link_name": bo_customer,
+                "parenttype": "Address"
+            }, "parent")
+
+        frappe.log_error(f"📦 BO Customer: {bo_customer}, Address: {bo_address_name}", "DEBUG")
+
+        # Link the branch operator's address to the new customer
+        if bo_address_name:
+            frappe.get_doc({
+                "doctype": "Dynamic Link",
+                "link_doctype": "Customer",
+                "link_name": new_customer.name,
+                "parenttype": "Address",
+                "parent": bo_address_name
+            }).insert(ignore_permissions=True)
+
         frappe.session['customer_phone'] = phone  # Store the phone in session
         frappe.session['customer_name'] = name  # Store the name in session
+        frappe.session['branch_operator_email'] = frappe.session.user  # Store the branch operator email
+        frappe.session['branch_operator_name'] = frappe.db.get_value("User", frappe.session.user, "full_name")  # Store the branch operator name
 
         return {
             "customer_name": new_customer.customer_name,
@@ -150,17 +190,24 @@ def create_customer(name, phone):
 @frappe.whitelist()
 def set_customer_phone(phone):
     frappe.session['customer_phone'] = phone
+    frappe.session['branch_operator_email'] = frappe.session.user
+    frappe.session['branch_operator_name'] = frappe.db.get_value("User", frappe.session.user, "full_name")
     return {"success": True}
 
 @frappe.whitelist()
 def custom_place_order(phone=None):
-    from webshop.webshop.shopping_cart.cart import _make_sales_order, _get_cart_quotation, get_shopping_cart_settings
+    from webshop.webshop.shopping_cart.cart import (
+        _make_sales_order,
+        _get_cart_quotation,
+        get_shopping_cart_settings,
+    )
     from webshop.webshop.utils.product import get_web_item_qty_in_stock
     from frappe import _
 
     if not phone:
         frappe.throw("Customer phone number is required.")
 
+    # Get the customer doc
     customer_name = frappe.get_value("Customer", {"mobile_no": phone})
     if not customer_name:
         frappe.throw("Customer with phone number not found.")
@@ -168,23 +215,52 @@ def custom_place_order(phone=None):
     party = frappe.get_doc("Customer", customer_name)
     quotation = _custom_get_cart_quotation()
 
+    # Ensure cart is not empty
+    if not quotation.items:
+        frappe.throw("Your cart is empty. Please add items before placing an order.")
+
+    # Reassign core fields
     quotation.customer = customer_name
     quotation.party_name = customer_name
-    quotation.billing_address = None
-    quotation.shipping_address = None
+    quotation.contact_email = frappe.session.user  # Branch Operator email
+    quotation.custom_branch_operator_name = get_fullname(frappe.session.user)
 
     cart_settings = get_shopping_cart_settings()
     quotation.company = cart_settings.company
-
-        # 👇 Make sure the cart isn't empty
-    if not quotation.items:
-        frappe.throw("Your cart is empty. Please add items before requesting a quote.")
+    quotation.title = customer_name
 
     quotation.flags.ignore_permissions = True
     quotation.run_method("calculate_taxes_and_totals")
-    quotation.save()  # 📝 Just save, don’t submit
+    quotation.submit()
 
-    return quotation.name
+    # Create and insert Sales Order
+    sales_order = frappe.get_doc(
+        _make_sales_order(quotation.name, ignore_permissions=True)
+    )
+    sales_order.payment_schedule = []  # Clear if any broken values
+
+    # Optional: stock checks
+    if not cint(cart_settings.allow_items_not_in_stock):
+        for item in sales_order.get("items"):
+            item.warehouse = frappe.db.get_value(
+                "Website Item", {"item_code": item.item_code}, "website_warehouse"
+            )
+            is_stock_item = frappe.db.get_value("Item", item.item_code, "is_stock_item")
+
+            if is_stock_item:
+                item_stock = get_web_item_qty_in_stock(item.item_code, "website_warehouse")
+                if not cint(item_stock.in_stock):
+                    frappe.throw(_("{0} Not in Stock").format(item.item_code))
+                if item.qty > item_stock.stock_qty:
+                    frappe.throw(
+                        _("Only {0} in Stock for item {1}").format(item_stock.stock_qty, item.item_code)
+                    )
+
+    sales_order.flags.ignore_permissions = True
+    sales_order.insert()
+    sales_order.submit()
+
+    return sales_order.name
 
 
 def _custom_get_cart_quotation():
