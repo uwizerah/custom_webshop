@@ -223,6 +223,7 @@ def custom_place_order(phone=None):
     quotation.customer = customer_name
     quotation.party_name = customer_name
     quotation.contact_email = frappe.session.user  # Branch Operator email
+    quotation.contact_person = None  # Avoid mismatch error
     quotation.custom_branch_operator_name = get_fullname(frappe.session.user)
 
     cart_settings = get_shopping_cart_settings()
