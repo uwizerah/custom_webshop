@@ -163,6 +163,21 @@
 {{ include_script("controls.bundle.js") }}
 {{ include_script("dialog.bundle.js") }}
 
+<script>
+    frappe.ready(() => {
+        // Optional: remove customer session data too if needed
+        sessionStorage.removeItem("customer_phone");
+        sessionStorage.removeItem("customer_name");
+
+        // Force-refresh the cart on page load (clears stale cache)
+        frappe.call('webshop.webshop.shopping_cart.cart.get_cart_quotation').then(r => {
+            if (!r.message || !r.message.doc || !r.message.doc.items || r.message.doc.items.length === 0) {
+                window.location.reload(); // ensure blank state shows up
+            }
+        });
+    });
+</script>
+
 <!-- Load cart.js only for this page -->
 <script src="/assets/custom_webshop/js/cart.js"></script>
 {% endblock %}
