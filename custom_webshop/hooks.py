@@ -8,7 +8,7 @@ app_license = "mit"
 web_include_js = ["/assets/custom_webshop/js/cart.js"]
 
 website_route_rules = [
-    {"from_route": "/cart", "to_route": "cart"},
+    {"from_route": "/cart", "to_route": "cart", "priority": 1},
     {"from_route": "/cart/<path:name>", "to_route": "cart"}
 ]
 
