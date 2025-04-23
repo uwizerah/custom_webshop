@@ -163,6 +163,9 @@
 {{ include_script("controls.bundle.js") }}
 {{ include_script("dialog.bundle.js") }}
 
-<!-- Load cart.js only for this page -->
+<!-- Load webshop cart.js first -->
+<script src="/assets/webshop/js/cart.js"></script>
+
+<!-- Load custom_webshop cart.js -->
 <script src="/assets/custom_webshop/js/cart.js"></script>
 {% endblock %}

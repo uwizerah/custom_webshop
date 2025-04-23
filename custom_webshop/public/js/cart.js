@@ -12,23 +12,23 @@ document.getElementById('search-customer').addEventListener('click', function() 
             callback: function(response) {
                 if (response.message && !response.message.error) {
                     const customer = response.message;
-            
+
                     document.getElementById('customer-name').innerText = customer.customer_name;
                     document.getElementById('customer-phone-display').innerText = customer.mobile_no;
-            
+
                     sessionStorage.setItem('customer_phone', customer.mobile_no);
                     sessionStorage.setItem('customer_name', customer.customer_name);
-            
+
                     // Hide the "create customer" form if it exists
                     const form = document.getElementById('create-customer-form');
                     if (form) form.style.display = 'none';
-            
+
                 } else {
                     if (!justCreatedCustomer) {
                         // Customer not found
                         document.getElementById('customer-name').innerText = "Not Found";
                         document.getElementById('customer-phone-display').innerText = "";
-                
+
                         // Show the "create customer" form if it exists
                         const form = document.getElementById('create-customer-form');
                         if (form) {
@@ -50,7 +50,7 @@ document.getElementById('search-customer').addEventListener('click', function() 
 
 // Handle customer creation
 if (document.getElementById('create-customer-btn')) {
-    document.getElementById('create-customer-btn').addEventListener('click', function () {  
+    document.getElementById('create-customer-btn').addEventListener('click', function () {
         const name = document.getElementById('create-customer-name').value.trim();
         const phone = document.getElementById('create-phone-number').value.trim();
         if (!name || !phone) {
