@@ -7,11 +7,6 @@ app_license = "mit"
 
 web_include_js = ["/assets/custom_webshop/js/cart.js"]
 
-website_route_rules = [
-    {"from_route": "/cart", "to_route": "cart", "priority": 1},
-    {"from_route": "/cart/<path:name>", "to_route": "cart"}
-]
-
 override_whitelisted_methods = {
     "webshop.webshop.api.get_product_filter_data": "custom_webshop.api.get_product_filter_data",
     "webshop.webshop.shopping_cart.cart.place_order": "custom_webshop.api.custom_place_order",
