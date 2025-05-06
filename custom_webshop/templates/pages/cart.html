@@ -9,17 +9,16 @@
 {% block header_actions %}{% endblock %}
 
 {% block page_content %}
-
 {% from "templates/includes/macros.html" import item_name_and_description %}
 
 {% if doc.items %}
 <div class="cart-container">
     <div class="row m-0">
-        <!-- Left section -->
+        <!-- Left Section -->
         <div class="col-md-8">
             <div class="frappe-card p-5 mb-4">
                 <div id="cart-error" class="alert alert-danger" style="display: none;"></div>
-                <div class="cart-items-header">{{ _('Itemsssssss') }}</div>
+                <div class="cart-items-header">{{ _('Items') }}</div>
 
                 <table class="table mt-3 cart-table">
                     <thead>
@@ -33,9 +32,8 @@
                         </tr>
                     </thead>
                     <tbody class="cart-items">
-                        {% include "templates/includes/cart/cart_items.html" %}
+                        {% include "custom_webshop/templates/includes/cart/cart_items.html" %}
                     </tbody>
-
                     {% if cart_settings.enable_checkout or cart_settings.show_price_in_quotation %}
                         <tfoot class="cart-tax-items">
                             {% include "templates/includes/cart/cart_items_total.html" %}
@@ -67,21 +65,19 @@
                 </div>
             </div>
 
-            <!-- Terms and Conditions -->
             {% if doc.terms %}
-                <div class="t-and-c-container mt-4 frappe-card">
-                    <h5>{{ _("Terms and Conditions") }}</h5>
-                    <div class="t-and-c-terms mt-2">
-                        {{ doc.terms }}
-                    </div>
+            <div class="t-and-c-container mt-4 frappe-card">
+                <h5>{{ _("Terms and Conditions") }}</h5>
+                <div class="t-and-c-terms mt-2">
+                    {{ doc.terms }}
                 </div>
+            </div>
             {% endif %}
         </div>
 
-        <!-- Right section -->
+        <!-- Right Section -->
         <div class="col-md-4">
             <div class="cart-payment-addresses">
-                <!-- Apply Coupon Code -->
                 {% set show_coupon_code = cart_settings.show_apply_coupon_code_in_website and cart_settings.enable_checkout %}
                 {% if show_coupon_code == 1 %}
                 <div class="mb-3">
@@ -97,15 +93,14 @@
                     <div class="payment-summary">
                         {% include "templates/includes/cart/cart_payment_summary.html" %}
                     </div>
-                    <!-- <div class="place-order">
-                        {% include "templates/includes/cart/place_order.html" %}
-                    </div> -->
                     <div class="place-order">
                         <button class="btn btn-primary place-order-button">
                             {{ _('Place Order') }}
                         </button>
                     </div>
                 </div>
+
+                {% if show_customer_search %}
                 <div class="customer-info">
                     <h3>Customer Details</h3>
                     <label for="customer-phone">Enter Phone Number:</label>
@@ -115,11 +110,9 @@
                             <button class="btn btn-sm btn-primary" id="search-customer">Search</button>
                         </div>
                     </div>
-
                     <p><strong>Name:</strong> <span id="customer-name">Not Selected</span></p>
                     <p><strong>Phone:</strong> <span id="customer-phone-display"></span></p>
 
-                    <!-- Create Customer Form (Hidden by default) -->
                     <div id="create-customer-form" class="mt-3" style="display: none;">
                         <h5>Create New Customer</h5>
                         <div class="form-group">
@@ -133,6 +126,7 @@
                         <button class="btn btn-success mt-2" id="create-customer-btn">Create Customer</button>
                     </div>
                 </div>
+                {% endif %}
             </div>
         </div>
     </div>
@@ -144,40 +138,22 @@
     </div>
     <div class="cart-empty-message mt-4">{{ _('Your cart is Empty') }}</div>
     {% if cart_settings.enable_checkout %}
-        <a class="btn btn-outline-primary" href="/orders" style="font-size: 16px;">
-            {{ _('See past orders') }}
-        </a>
+        <a class="btn btn-outline-primary" href="/orders">{{ _('See past orders') }}</a>
     {% else %}
-        <a class="btn btn-outline-primary" href="/quotations" style="font-size: 16px;">
-            {{ _('See past quotations') }}
-        </a>
+        <a class="btn btn-outline-primary" href="/quotations">{{ _('See past quotations') }}</a>
     {% endif %}
 </div>
 {% endif %}
-
 {% endblock %}
 
 {% block base_scripts %}
-<!-- JS should be loaded in body -->
 {{ include_script("frappe-web.bundle.js") }}
 {{ include_script("controls.bundle.js") }}
 {{ include_script("dialog.bundle.js") }}
 
-<script>
-    frappe.ready(() => {
-        // Optional: remove customer session data too if needed
-        sessionStorage.removeItem("customer_phone");
-        sessionStorage.removeItem("customer_name");
+<!-- Load webshop cart logic first -->
+<script src="/assets/webshop/js/shopping_cart.js"></script>
 
-        // Force-refresh the cart on page load (clears stale cache)
-        frappe.call('webshop.webshop.shopping_cart.cart.get_cart_quotation').then(r => {
-            if (!r.message || !r.message.doc || !r.message.doc.items || r.message.doc.items.length === 0) {
-                window.location.reload(); // ensure blank state shows up
-            }
-        });
-    });
-</script>
-
-<!-- Load cart.js only for this page -->
+<!-- Then custom enhancements (customer search + order placement) -->
 <script src="/assets/custom_webshop/js/cart.js"></script>
 {% endblock %}

@@ -1,11 +1,14 @@
 import json
 import frappe
+import re
 from frappe.utils import cint
 from frappe.utils import nowdate
 from frappe.utils import get_fullname
 from webshop.webshop.product_data_engine.filters import ProductFiltersBuilder
 from webshop.webshop.product_data_engine.query import ProductQuery
 from webshop.webshop.doctype.override_doctype.item_group import get_child_groups_for_website
+from webshop.webshop.shopping_cart.cart import update_cart as original_update_cart
+from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
 
 @frappe.whitelist(allow_guest=True)
 def get_product_filter_data(query_args=None):
@@ -263,7 +266,6 @@ def custom_place_order(phone=None):
 
     return sales_order.name
 
-
 def _custom_get_cart_quotation():
     from webshop.webshop.shopping_cart.cart import get_shopping_cart_settings
 
@@ -302,3 +304,134 @@ def _custom_get_cart_quotation():
         qdoc.run_method("set_missing_values")
 
     return qdoc
+
+@frappe.whitelist()
+def update_cart(item_code, qty, additional_notes=None, with_items=False):
+    # Call the original function
+    result = original_update_cart(item_code, qty, additional_notes, with_items)
+    
+    # Add custom logic here if needed
+    # Example: Log the cart update
+    frappe.logger().info(f"Cart updated for item: {item_code}, qty: {qty}")
+
+    return result
+
+@frappe.whitelist(allow_guest=True)
+def receive_sms():
+    """Receive raw MoMo SMS and create a transaction based on sender name and last 3 digits."""
+    data = frappe.local.form_dict or frappe.get_json(force=True) or {}
+    sms_text = data.get("sms_text", "")
+    sender = data.get("sender")
+    ts = data.get("ts")
+
+    try:
+        # Extract fields from SMS
+        txid_match = re.search(r"TxId:(\d+)", sms_text)
+        amount_match = re.search(r"received (\d+) RWF", sms_text)
+        name_match = re.search(r"from (.*?) \(\*\*(\d{3})\)", sms_text)
+
+        txid = txid_match.group(1) if txid_match else None
+        amount = float(amount_match.group(1)) if amount_match else None
+        sender_name = name_match.group(1).strip() if name_match else None
+        last_three_digits = name_match.group(2) if name_match else None
+
+        if not all([txid, amount, sender_name, last_three_digits]):
+            raise ValueError("Missing required fields from SMS")
+
+        # Save raw sender name and digits
+        momo_args = {
+            "doctype": "MoMo Transaction",
+            "transaction_datetime": ts,
+            "amount": amount,
+            "sender": sender,
+            "sender_name": sender_name,
+            "sender_last_digits": last_three_digits,
+            "transaction_id": txid
+        }
+
+        momo = frappe.get_doc(momo_args)
+        momo.insert(ignore_permissions=True)
+        frappe.db.commit()
+
+        return {"status": "ok", "transaction_id": txid}
+
+    except Exception as e:
+        frappe.log_error(frappe.get_traceback(), "MoMo SMS Processing Error")
+        return {"status": "error", "message": str(e)}
+
+@frappe.whitelist(allow_guest=True)
+def check_momo_payment(sales_order):
+    so = frappe.get_doc("Sales Order", sales_order)
+    customer_name = so.customer_name.strip().lower()
+    last_digits = so.contact_mobile[-3:] if so.contact_mobile else None
+
+    # Match any MoMo transaction where the name is part of the sender_name and the last digits match
+    txn = frappe.db.sql("""
+        SELECT name, transaction_id, transaction_datetime
+        FROM `tabMoMo Transaction`
+        WHERE amount = %s
+          AND LOWER(sender_name) LIKE %s
+          AND sender_last_digits = %s
+        ORDER BY transaction_datetime DESC
+        LIMIT 1
+    """, (so.grand_total, f"%{customer_name}%", last_digits), as_dict=True)
+
+    if not txn:
+        return {"status": "Pending"}
+
+    txn = txn[0]  # unpack result
+
+    # Create and submit Sales Invoice if it doesn't exist
+    if not frappe.db.exists("Sales Invoice Item", {"sales_order": sales_order}):
+        si = make_sales_invoice(sales_order)
+        si.mode_of_payment = "Mobile Money"
+        si.set_posting_time = 1
+        si.posting_date = frappe.utils.today()
+        si.insert(ignore_permissions=True)
+        si.submit()
+    else:
+        si = frappe.get_doc("Sales Invoice", {"sales_order": sales_order})
+
+    # Paid To: where the money is going (e.g., mobile money account)
+    paid_to = frappe.get_value("Mode of Payment Account", {
+        "parent": "Mobile Money",
+        "company": so.company
+    }, "default_account")
+
+    # Paid From: Customer account (Receivable) — required for party_account
+    party_account = frappe.get_value("Account", {
+        "account_type": "Receivable",
+        "company": so.company,
+        "is_group": 0
+    })
+
+    payment_entry = frappe.get_doc({
+        "doctype": "Payment Entry",
+        "payment_type": "Receive",
+        "company": so.company,
+        "posting_date": frappe.utils.nowdate(),
+        "party_type": "Customer",
+        "party": so.customer,
+        "party_account": party_account,
+        "paid_from": party_account,
+        "paid_to": paid_to,          
+        "mode_of_payment": "Mobile Money",
+        "paid_amount": so.grand_total,
+        "received_amount": so.grand_total,
+        "reference_no": txn.transaction_id,
+        "reference_date": txn.transaction_datetime,
+        "references": [{
+            "reference_doctype": "Sales Invoice",
+            "reference_name": si.name,
+            "allocated_amount": so.grand_total
+        }]
+    })
+    payment_entry.insert(ignore_permissions=True)
+    payment_entry.submit()
+
+    return {
+        "status": "Paid",
+        "transaction_id": txn.transaction_id,
+        "payment_entry": payment_entry.name,
+        "sales_invoice": si.name
+    }

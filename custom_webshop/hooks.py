@@ -10,6 +10,7 @@ web_include_js = ["/assets/custom_webshop/js/cart.js"]
 override_whitelisted_methods = {
     "webshop.webshop.api.get_product_filter_data": "custom_webshop.api.get_product_filter_data",
     "webshop.webshop.shopping_cart.cart.place_order": "custom_webshop.api.custom_place_order",
+    "webshop.webshop.shopping_cart.cart.update_cart": "custom_webshop.api.update_cart"
 }
 
 # Apps
