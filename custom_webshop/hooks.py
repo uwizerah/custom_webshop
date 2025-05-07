@@ -5,7 +5,7 @@ app_description = "First custom app. Customize products per users warehouse"
 app_email = "huwizera@kivuchoice.com"
 app_license = "mit"
 
-web_include_js = ["/assets/custom_webshop/js/cart.js"]
+web_include_js = ["/assets/custom_webshop/js/cart.js?v=2025-05-07"]
 
 override_whitelisted_methods = {
     "webshop.webshop.api.get_product_filter_data": "custom_webshop.api.get_product_filter_data",
