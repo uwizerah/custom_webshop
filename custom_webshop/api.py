@@ -305,7 +305,7 @@ def _custom_get_cart_quotation():
 
     return qdoc
 
-@frappe.whitelist()
+@frappe.whitelist(allow_guest=True)
 def update_cart(item_code, qty, additional_notes=None, with_items=False):
     # Call the original function
     result = original_update_cart(item_code, qty, additional_notes, with_items)
