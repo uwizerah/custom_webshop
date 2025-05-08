@@ -5,7 +5,6 @@ from frappe.utils import cint
 from frappe.utils import nowdate
 from frappe.utils import get_fullname
 from datetime import datetime
-from frappe.utils import now_datetime
 from webshop.webshop.product_data_engine.filters import ProductFiltersBuilder
 from webshop.webshop.product_data_engine.query import ProductQuery
 from webshop.webshop.doctype.override_doctype.item_group import get_child_groups_for_website
@@ -320,49 +319,40 @@ def update_cart(item_code, qty, additional_notes=None, with_items=False):
 
 @frappe.whitelist(allow_guest=True)
 def receive_sms():
-    """Receive raw MoMo SMS and record a transaction."""
+    """Receive raw MoMo SMS and record a transaction, pulling its timestamp from the SMS text."""
     data     = frappe.local.form_dict or frappe.get_json(force=True) or {}
     sms_text = data.get("sms_text", "")
     sender   = data.get("sender")
-    raw_ts   = data.get("ts")
-
-    # 1) Normalize timestamp to a Python datetime
-    try:
-        if isinstance(raw_ts, (int, float)):
-            ts = datetime.fromtimestamp(raw_ts)
-        else:
-            # try ISO string
-            ts = datetime.fromisoformat(raw_ts)
-    except Exception:
-        ts = now_datetime()
 
     try:
-        # 2) Extract mandatory fields
-        txid_m = re.search(r"TxId[:*\s]+(\d+)", sms_text, re.IGNORECASE)
-        amt_m  = re.search(r"received\s+([\d,\.]+)\s*RWF", sms_text, re.IGNORECASE)
-        txid   = txid_m and txid_m.group(1)
-        amount = amt_m  and float(amt_m.group(1).replace(",", ""))
+        # 1) Extract TxID, amount and sender details
+        txid_m = re.search(r"TxId[:*]+(\d+)", sms_text)
+        amt_m  = re.search(r"received\s+([\d,\.]+)\s*RWF", sms_text)
+        name_m = re.search(r"from\s+(.+?)\s*\(\*\*(\d{3})\)", sms_text)
 
-        if not txid or not amount:
-            raise ValueError(f"Unable to parse TxId or amount from SMS: {sms_text}")
+        if not (txid_m and amt_m and name_m):
+            raise ValueError("Missing TxId, amount or sender details")
 
-        # 3) Try to parse sender name + last 3 digits, else fallback
-        name_m = re.search(r"from\s+(.+?)\s*\(\*\*(\d{3})\)", sms_text, re.IGNORECASE)
-        if name_m:
-            sender_name     = name_m.group(1).strip()
-            sender_digits   = name_m.group(2)
+        txid           = txid_m.group(1)
+        amount         = float(amt_m.group(1).replace(",", ""))
+        sender_name    = name_m.group(1).strip()
+        last_three     = name_m.group(2)
+
+        # 2) Pull the “at YYYY-MM-DD HH:MM:SS” timestamp
+        ts_m = re.search(r"\bat\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})", sms_text)
+        if ts_m:
+            ts = datetime.strptime(ts_m.group(1), "%Y-%m-%d %H:%M:%S")
         else:
-            sender_name   = sender or ""
-            sender_digits = re.sub(r"\D", "", sender or "")[-3:]
+            ts = datetime.now()
 
-        # 4) Build and insert the MoMo Transaction
+        # 3) Create the MoMo Transaction
         momo = frappe.get_doc({
             "doctype": "MoMo Transaction",
             "transaction_datetime": ts,
             "amount": amount,
             "sender": sender,
             "sender_name": sender_name,
-            "sender_last_digits": sender_digits,
+            "sender_last_digits": last_three,
             "transaction_id": txid
         })
         momo.insert(ignore_permissions=True)
@@ -370,9 +360,9 @@ def receive_sms():
 
         return {"status": "ok", "transaction_id": txid}
 
-    except Exception:
+    except Exception as e:
         frappe.log_error(frappe.get_traceback(), "MoMo SMS Processing Error")
-        return {"status": "error", "message": "Failed to process incoming SMS."}
+        return {"status": "error", "message": str(e)}
 
 @frappe.whitelist(allow_guest=True)
 def check_momo_payment(sales_order):
