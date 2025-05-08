@@ -328,10 +328,10 @@ def receive_sms():
         # 1) Extract TxID, amount and sender details
         txid_m = re.search(r"TxId[:*]+(\d+)", sms_text)
         amt_m  = re.search(r"received\s+([\d,\.]+)\s*RWF", sms_text)
-        name_m = re.search(r"from\s+(.+?)\s*\(\*\*(\d{3})\)", sms_text)
+        name_m = re.search(r"from\s+(.+?)\s*\(\*+(\d{3})\)", sms_text)
 
         if not (txid_m and amt_m and name_m):
-            raise ValueError("Missing TxId, amount or sender details")
+            raise ValueError(f"Missing fields: TxID? {bool(txid_m)}, amount? {bool(amt_m)}, name? {bool(name_m)}")
 
         txid           = txid_m.group(1)
         amount         = float(amt_m.group(1).replace(",", ""))
