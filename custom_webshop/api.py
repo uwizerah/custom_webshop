@@ -4,6 +4,8 @@ import re
 from frappe.utils import cint
 from frappe.utils import nowdate
 from frappe.utils import get_fullname
+from datetime import datetime
+from frappe.utils import now_datetime
 from webshop.webshop.product_data_engine.filters import ProductFiltersBuilder
 from webshop.webshop.product_data_engine.query import ProductQuery
 from webshop.webshop.doctype.override_doctype.item_group import get_child_groups_for_website
@@ -318,46 +320,59 @@ def update_cart(item_code, qty, additional_notes=None, with_items=False):
 
 @frappe.whitelist(allow_guest=True)
 def receive_sms():
-    """Receive raw MoMo SMS and create a transaction based on sender name and last 3 digits."""
-    data = frappe.local.form_dict or frappe.get_json(force=True) or {}
+    """Receive raw MoMo SMS and record a transaction."""
+    data     = frappe.local.form_dict or frappe.get_json(force=True) or {}
     sms_text = data.get("sms_text", "")
-    sender = data.get("sender")
-    ts = data.get("ts")
+    sender   = data.get("sender")
+    raw_ts   = data.get("ts")
+
+    # 1) Normalize timestamp to a Python datetime
+    try:
+        if isinstance(raw_ts, (int, float)):
+            ts = datetime.fromtimestamp(raw_ts)
+        else:
+            # try ISO string
+            ts = datetime.fromisoformat(raw_ts)
+    except Exception:
+        ts = now_datetime()
 
     try:
-        # Extract fields from SMS
-        txid_match = re.search(r"TxId:(\d+)", sms_text)
-        amount_match = re.search(r"received (\d+) RWF", sms_text)
-        name_match = re.search(r"from (.*?) \(\*\*(\d{3})\)", sms_text)
+        # 2) Extract mandatory fields
+        txid_m = re.search(r"TxId[:*\s]+(\d+)", sms_text, re.IGNORECASE)
+        amt_m  = re.search(r"received\s+([\d,\.]+)\s*RWF", sms_text, re.IGNORECASE)
+        txid   = txid_m and txid_m.group(1)
+        amount = amt_m  and float(amt_m.group(1).replace(",", ""))
 
-        txid = txid_match.group(1) if txid_match else None
-        amount = float(amount_match.group(1)) if amount_match else None
-        sender_name = name_match.group(1).strip() if name_match else None
-        last_three_digits = name_match.group(2) if name_match else None
+        if not txid or not amount:
+            raise ValueError(f"Unable to parse TxId or amount from SMS: {sms_text}")
 
-        if not all([txid, amount, sender_name, last_three_digits]):
-            raise ValueError("Missing required fields from SMS")
+        # 3) Try to parse sender name + last 3 digits, else fallback
+        name_m = re.search(r"from\s+(.+?)\s*\(\*\*(\d{3})\)", sms_text, re.IGNORECASE)
+        if name_m:
+            sender_name     = name_m.group(1).strip()
+            sender_digits   = name_m.group(2)
+        else:
+            sender_name   = sender or ""
+            sender_digits = re.sub(r"\D", "", sender or "")[-3:]
 
-        # Save raw sender name and digits
-        momo_args = {
+        # 4) Build and insert the MoMo Transaction
+        momo = frappe.get_doc({
             "doctype": "MoMo Transaction",
             "transaction_datetime": ts,
             "amount": amount,
             "sender": sender,
             "sender_name": sender_name,
-            "sender_last_digits": last_three_digits,
+            "sender_last_digits": sender_digits,
             "transaction_id": txid
-        }
-
-        momo = frappe.get_doc(momo_args)
+        })
         momo.insert(ignore_permissions=True)
         frappe.db.commit()
 
         return {"status": "ok", "transaction_id": txid}
 
-    except Exception as e:
+    except Exception:
         frappe.log_error(frappe.get_traceback(), "MoMo SMS Processing Error")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Failed to process incoming SMS."}
 
 @frappe.whitelist(allow_guest=True)
 def check_momo_payment(sales_order):

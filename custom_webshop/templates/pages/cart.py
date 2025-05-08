@@ -1,6 +1,5 @@
 import frappe
 from webshop.webshop.shopping_cart.cart import get_cart_quotation
-from webshop.webshop.shopping_cart.cart import update_cart as original_update_cart
 
 def get_context(context):
     frappe.local.no_cache = 1
@@ -15,9 +14,3 @@ def get_context(context):
         context.show_customer_search = True
     else:
         context.show_customer_search = False
-
-
-@frappe.whitelist()
-def update_cart(item_code, qty, additional_notes=None, with_items=False):
-    # Call the original function
-    return original_update_cart(item_code, qty, additional_notes, with_items)
