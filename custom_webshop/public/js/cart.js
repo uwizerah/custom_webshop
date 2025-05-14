@@ -1,4 +1,5 @@
 let justCreatedCustomer = false;
+const customerSearchEnabled = !!document.getElementById('customer-phone');
 
 // ✅ Setup shopping_cart.shopping_cart_update only ONCE at start
 if (typeof shopping_cart === "undefined") {
@@ -47,6 +48,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         } else {
                             if (!justCreatedCustomer) {
                                 // Customer not found
+                                sessionStorage.removeItem('customer_phone');
++                               sessionStorage.removeItem('customer_name');
                                 document.getElementById('customer-name').innerText = "Not Found";
                                 document.getElementById('customer-phone-display').innerText = "";
                                 // Show the "create customer" form if it exists
@@ -107,7 +110,7 @@ document.addEventListener('DOMContentLoaded', function() {
     if (placeOrderButton) {
         placeOrderButton.addEventListener('click', function () {
             const phone = sessionStorage.getItem('customer_phone');
-            if (!phone) {
+            if (customerSearchEnabled && !phone) {
                 alert("Please search or create a customer before placing an order.");
                 return;
             }
