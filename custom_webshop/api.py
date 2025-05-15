@@ -323,6 +323,8 @@ def receive_sms():
     data     = frappe.local.form_dict or frappe.get_json(force=True) or {}
     sms_text = data.get("sms_text", "")
     sender   = data.get("sender")
+    branch_name = data.get("branch_name", "Unknown Branch")
+    branch_phone = data.get("branch_phone", "Unknown Phone")
 
     try:
         # 1) Extract TxID, amount and sender details
@@ -353,7 +355,9 @@ def receive_sms():
             "sender": sender,
             "sender_name": sender_name,
             "sender_last_digits": last_three,
-            "transaction_id": txid
+            "transaction_id": txid,
+            "branch_name": branch_name,
+            "branch_phone": branch_phone
         })
         momo.insert(ignore_permissions=True)
         frappe.db.commit()
