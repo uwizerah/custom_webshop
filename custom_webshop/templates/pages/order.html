@@ -2,154 +2,283 @@
 {% from "webshop/templates/includes/order/order_macros.html" import item_name_and_description %}
 
 {% block breadcrumbs %}
-    {% include "templates/includes/breadcrumbs.html" %}
+  {% include "templates/includes/breadcrumbs.html" %}
 {% endblock %}
 
 {% block title %}
-    {{ doc.name }}
+  {{ doc.name }}
 {% endblock %}
 
 {% block header %}
-    <h3 class="m-0">{{ doc.name }}</h3>
-{% endblock %}
+  <div class="order-header" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+    <div>
+    <h3 class="order-header-title" style="margin-bottom:8px;">
+        {{ doc.name }}
+    </h3>
 
-{% block header_actions %}
-    <div class="row">
-        <div class="dropdown">
-            <button class="btn btn-sm btn-secondary dropdown-toggle" data-toggle="dropdown" aria-expanded="false">
-                <span class="font-md">{{ _('Actions') }}</span>
-                <b class="caret"></b>
-            </button>
-            <ul class="dropdown-menu dropdown-menu-right" role="menu">
-                {% if doc.doctype == 'Purchase Order' and show_make_pi_button %}
-                    <a class="dropdown-item"
-                       href="/api/method/erpnext.buying.doctype.purchase_order.purchase_order.make_purchase_invoice_from_portal?purchase_order_name={{ doc.name }}"
-                       data-action="make_purchase_invoice">{{ _("Make Purchase Invoice") }}
-                    </a>
-                {% endif %}
-                <a class="dropdown-item"
-                   href='/printview?doctype={{ doc.doctype}}&name={{ doc.name }}&format={{ print_format }}' 
-                   target="_blank" rel="noopener noreferrer">
-                   {{ _("Print") }}
-                </a>
-            </ul>
-        </div>
-        <div class="form-column col-sm-6">
-            <div class="page-header-actions-block" data-html-block="header-actions">
-                <p>
-                    {% if enabled_checkout and (doc.doctype != "Sales Invoice" or doc.outstanding_amount > 0) %}
-                        <a href="/api/method/erpnext.accounts.doctype.payment_request.payment_request.make_payment_request?dn={{ doc.name }}&dt={{ doc.doctype }}&submit_doc=1&order_type=Shopping Cart"
-                           class="btn btn-primary btn-sm" id="pay-for-order">
-                            {{ _("Pay") }} {{ doc.get_formatted("grand_total") }}
-                        </a>
-                    {% endif %}
-                    {% if doc.docstatus == 1 and doc.payment_status != "Paid" %}
-                        <button id="check-payment" class="btn btn-secondary btn-sm">
-                            {{ _("Check MoMo Payment") }}
-                        </button>
-                    {% endif %}
-                </p>
-            </div>
-        </div>
+    <!-- existing webshop status pill -->
+    <span class="status-pill {{ doc.indicator_color or 'blue' }}" style="vertical-align:middle;">
+        {{ _(doc.get('indicator_title')) or _(doc.status) or _("Submitted") }}
+    </span>
+
+    <!-- only show outstanding amount if there is one -->
+    {% if doc.doctype == "Sales Invoice" and doc.outstanding_amount > 0 %}
+        <span
+        class="badge badge-warning"
+        style="margin-left:10px;font-size:14px;vertical-align:middle;
+                background:#ffe6b2;color:#b57f00;">
+        {{ _("Outstanding:") }} {{ doc.outstanding_amount }} {{ doc.currency }}
+        </span>
+    {% endif %}
     </div>
+    <div class="order-actions-area" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-top:12px;">
+      <div class="dropdown d-inline-block">
+        <button class="btn btn-sm btn-secondary dropdown-toggle"
+                data-toggle="dropdown" aria-expanded="false">
+          <span class="font-md">{{ _("Actions") }}</span>
+          <b class="caret"></b>
+        </button>
+        <ul class="dropdown-menu dropdown-menu-right" role="menu">
+          <a class="dropdown-item"
+             href='/printview?doctype={{ doc.doctype }}&name={{ doc.name }}&format={{ print_format }}'
+             target="_blank" rel="noopener noreferrer">
+            {{ _("Print") }}
+          </a>
+          {% if show_make_invoice %}
+            <button id="btn-make-invoice" class="dropdown-item text-info" type="button">
+              {{ _("Create Invoice") }}
+            </button>
+          {% endif %}
+          {% if show_make_delivery %}
+            <button id="btn-deliver" class="dropdown-item text-success" type="button">
+              {{ _("Make Delivery Note") }}
+            </button>
+          {% endif %}
+          {% if show_cancel_order %}
+            <button id="btn-cancel" class="dropdown-item text-danger" type="button">
+              {{ _("Cancel Order") }}
+            </button>
+          {% endif %}
+          {% if show_partial_momo_button %}
+            <button id="partial-momo-btn" class="dropdown-item text-warning" type="button">
+              {{ _("Match Partial MoMo Payment") }}
+            </button>
+          {% endif %}
+        </ul>
+      </div>
+      {% if show_check_momo_payment %}
+        <button id="check-invoice-payment" class="btn btn-secondary btn-sm">{{ _("Check MoMo Payment") }}</button>
+      {% endif %}
+    </div>
+  </div>
 {% endblock %}
 
 {% block page_content %}
-    <div>
-        <div class="row transaction-subheading mt-1">
-            <div class="col-6 text-muted small mt-1">
-                {{ frappe.utils.format_date(doc.transaction_date, 'medium') }}
-                {% if doc.valid_till %}
-                    <p>{{ _("Valid Till") }}: {{ frappe.utils.format_date(doc.valid_till, 'medium') }}</p>
-                {% endif %}
-            </div>
-        </div>
-        <div class="row indicator-container mt-2">
-            <div class="col-10">
-                <span class="indicator-pill {{ doc.indicator_color or (" blue" if doc.docstatus==1 else "darkgrey") }}">
-                    {% if doc.doctype == "Quotation" and not doc.docstatus %}
-                        {{ _("Pending") }}
-                    {% else %}
-                        {{ _(doc.get('indicator_title')) or _(doc.status) or _("Submitted") }}
-                    {% endif %}
-                </span>
-            </div>
-            <div class="text-right col-2">
-                {%- set party_name = doc.supplier_name 
-                   if doc.doctype in ['Supplier Quotation','Purchase Invoice','Purchase Order']
-                   else doc.customer_name -%}
-                <b>{{ party_name }}</b>
-                {% if doc.contact_display and doc.contact_display != party_name %}
-                    <br>{{ doc.contact_display }}
-                {% endif %}
-            </div>
-        </div>
-
-        {% if doc._header %}
-            {{ doc._header }}
+  <div>
+    <div class="row transaction-subheading mt-1">
+      <div class="col-6 text-muted small mt-1">
+        {{ frappe.utils.format_date(doc.transaction_date, 'medium') }}
+        {% if doc.valid_till %}
+          <p>{{ _("Valid Till") }}: {{ frappe.utils.format_date(doc.valid_till, 'medium') }}</p>
         {% endif %}
-
-        <div class="order-container mt-4">
-            <!-- items -->
-            <div class="w-100">
-                <div class="order-items order-item-header mb-1 row text-muted">
-                    <span class="col-5">{{ _("Item") }}</span>
-                    <span class="d-s-n col-3">{{ _("Quantity") }}</span>
-                    <span class="col-2 pl-10">{{ _("Rate") }}</span>
-                    <span class="col-2 text-right">{{ _("Amount") }}</span>
-                </div>
-                {% for d in doc.items %}
-                    <div class="order-items row align-items-center">
-                        <span class="order-item-name col-5 pr-0">
-                            {{ item_name_and_description(d) }}
-                        </span>
-                        <span class="d-s-n col-3 pl-10">{{ d.get_formatted("qty") }}</span>
-                        <span class="order-rate pl-4 col-2">{{ d.get_formatted("rate") }}</span>
-                        <span class="col-2 text-right">{{ d.get_formatted("amount") }}</span>
-                    </div>
-                {% endfor %}
-            </div>
-
-            <!-- taxes -->
-            <div class="">
-                {% include "webshop/templates/includes/order/order_taxes.html" %}
-            </div>
-        </div>
+      </div>
+      <div class="text-right col-6">
+        {%- set party_name = doc.supplier_name
+           if doc.doctype in ['Supplier Quotation','Purchase Invoice','Purchase Order']
+           else doc.customer_name -%}
+        <b>{{ party_name }}</b>
+        {% if doc.contact_display and doc.contact_display != party_name %}
+          <br>{{ doc.contact_display }}
+        {% endif %}
+      </div>
     </div>
+    <div class="order-container mt-4">
+      <div class="w-100">
+        <div class="order-items order-item-header mb-1 row text-muted">
+          <span class="col-5">{{ _("Item") }}</span>
+          <span class="d-s-n col-3">{{ _("Quantity") }}</span>
+          <span class="col-2 pl-10">{{ _("Rate") }}</span>
+          <span class="col-2 text-right">{{ _("Amount") }}</span>
+        </div>
+        {% for d in doc.items %}
+          <div class="order-items row align-items-center">
+            <span class="order-item-name col-5 pr-0">
+              {{ item_name_and_description(d) }}
+            </span>
+            <span class="d-s-n col-3 pl-10">{{ d.get_formatted("qty") }}</span>
+            <span class="order-rate pl-4 col-2">{{ d.get_formatted("rate") }}</span>
+            <span class="col-2 text-right">{{ d.get_formatted("amount") }}</span>
+          </div>
+        {% endfor %}
+      </div>
+      <div>
+        {% include "webshop/templates/includes/order/order_taxes.html" %}
+      </div>
+    </div>
+  </div>
 
-    {# (The rest of the page—loyalty, attachments, T&C—can remain unchanged) #}
+  <!-- Partial Payment Modal -->
+  <div id="partial-payment-modal" style="display:none; position:fixed; z-index:10000; left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.4); align-items:center; justify-content:center;">
+    <div style="background:white; border-radius:16px; max-width:400px; margin:auto; padding:30px;">
+      <h5>{{ _("Partial MoMo Payment Detected") }}</h5>
+      <p>
+        {{ _("A MoMo payment was found for this customer, but the amount does not match the invoice total.") }}
+      </p>
+      <p>
+        <b>{{ _("MoMo Amount:") }}</b>
+        <span id="momo-amount"></span><br>
+        <b>{{ _("Reference:") }}</b>
+        <span id="momo-txid"></span>
+      </p>
+      <p>
+        {{ _("Do you want to apply this payment as a partial payment to the invoice?") }}
+      </p>
+      <button class="btn btn-primary" id="confirm-partial-payment">{{ _("Confirm Partial Payment") }}</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('partial-payment-modal').style.display='none';">{{ _("Cancel") }}</button>
+    </div>
+  </div>
 {% endblock %}
 
 {% block script %}
-    <script> {% include "templates/pages/order.js" %} </script>
-    <script>
-        window.doc_info = {
-            customer: '{{ doc.customer }}',
-            doctype: '{{ doc.doctype }}',
-            doctype_name: '{{ doc.name }}',
-            grand_total: '{{ doc.grand_total }}',
-            currency: '{{ doc.currency }}'
-        };
-    </script>
-
-    <script>
+  <script>
     document.addEventListener("DOMContentLoaded", function() {
-        var btn = document.getElementById("check-payment");
-        if (!btn) return;
-        btn.addEventListener("click", function() {
-            frappe.call({
-                method: "custom_webshop.api.check_momo_payment",
-                args: { sales_order: "{{ doc.name }}" },
-                callback: function(r) {
-                    if (r.message.status === "Paid") {
-                        frappe.msgprint(`✅ Payment confirmed (TxID: ${r.message.transaction_id})`);
+      // Cancel Order
+      const btnCancel = document.getElementById("btn-cancel");
+      if (btnCancel) {
+        btnCancel.onclick = () => {
+          frappe.confirm(
+            '{{ _("Are you sure you want to cancel this order?") }}',
+            () => {
+              frappe.call({
+                method: 'frappe.client.cancel',
+                args: { doctype: 'Sales Order', name: '{{ doc.name }}' },
+                callback: () => location.reload()
+              });
+            }
+          );
+        };
+      }
+
+      // Make Delivery Note
+      const btnDeliver = document.getElementById("btn-deliver");
+      if (btnDeliver) {
+        btnDeliver.onclick = () => {
+         frappe.call({
+           method: 'custom_webshop.api.make_delivery_note_from_portal',
+           args: { sales_order: '{{ doc.name }}' },
+           callback: (r) => {
+             if (r.message && r.message.name) {
+               frappe.msgprint("✅ Delivery Note created and submitted: " + r.message.name);
+             } else {
+               frappe.msgprint(__("Could not make Delivery Note"));
+             }
+           }
+         });
+        };
+      }
+
+      // Create Invoice
+      const btnMakeInvoice = document.getElementById("btn-make-invoice");
+      if (btnMakeInvoice) {
+        btnMakeInvoice.onclick = () => {
+         frappe.call({
+           method: 'custom_webshop.api.make_invoice_from_portal',
+           args: { sales_order: '{{ doc.name }}' },
+           callback: (r) => {
+             if (r.message && r.message.name) {
+               frappe.msgprint("✅ Invoice created: " + r.message.name);
+               window.location.href = "/invoices/" + r.message.name;
+             } else {
+               frappe.msgprint(__("Could not create Invoice"));
+             }
+           }
+         });
+        };
+      }
+
+      // Check MoMo Payment (Standard or Partial)
+      const btnCheck = document.getElementById("check-invoice-payment");
+      if (btnCheck) {
+        btnCheck.onclick = () => {
+          frappe.call({
+            method: 'custom_webshop.api.check_momo_payment_on_invoice',
+            args: { sales_invoice: '{{ doc.name }}' },
+            callback: (r) => {
+              if (r.message.status === "Paid") {
+                frappe.msgprint(`✅ {{ _("Payment confirmed") }} (TxID: ${r.message.transaction_id})`);
+                location.reload();
+              } else if (r.message.status === "PartialMatch") {
+                // Show modal for partial payment confirmation
+                document.getElementById('partial-payment-modal').style.display = 'flex';
+                document.getElementById('momo-amount').innerText = r.message.amount + " {{ doc.currency }}";
+                document.getElementById('momo-txid').innerText = r.message.transaction_id;
+                // On confirm, create the payment entry
+                document.getElementById('confirm-partial-payment').onclick = function() {
+                  frappe.call({
+                    method: 'custom_webshop.api.apply_partial_momo_payment',
+                    args: {
+                      sales_invoice: '{{ doc.name }}',
+                      momo_transaction_id: r.message.transaction_id,
+                      amount: r.message.amount
+                    },
+                    callback: function(pr) {
+                      if (pr.message && (pr.message.status === "Partly Paid" || pr.message.status === "Paid")) {
+                        frappe.msgprint("✅ Partial payment recorded!");
+                        document.getElementById('partial-payment-modal').style.display = 'none';
                         location.reload();
-                    } else {
-                        frappe.msgprint("❌ No matching MoMo transaction yet.");
+                      } else {
+                        frappe.msgprint(__("Could not apply partial payment"));
+                      }
                     }
-                }
-            });
-        });
+                  });
+                };
+              } else {
+                frappe.msgprint("❌ {{ _('No matching MoMo transaction yet.') }}");
+              }
+            }
+          });
+        };
+      }
+
+      // Partial MoMo Button in Actions Dropdown (manual override, if needed)
+      const btnPartialMomo = document.getElementById("partial-momo-btn");
+      if (btnPartialMomo) {
+        btnPartialMomo.onclick = function() {
+          // Manual: just reuse the standard logic
+          frappe.call({
+            method: 'custom_webshop.api.find_partial_momo_payment',
+            args: { sales_invoice: '{{ doc.name }}' },
+            callback: function(r) {
+              if (r.message && r.message.status === "PartialMatch") {
+                document.getElementById('partial-payment-modal').style.display = 'flex';
+                document.getElementById('momo-amount').innerText = r.message.amount + " {{ doc.currency }}";
+                document.getElementById('momo-txid').innerText = r.message.transaction_id;
+                document.getElementById('confirm-partial-payment').onclick = function() {
+                  frappe.call({
+                    method: 'custom_webshop.api.apply_partial_momo_payment',
+                    args: {
+                      sales_invoice: '{{ doc.name }}',
+                      momo_transaction_id: r.message.transaction_id,
+                      amount: r.message.amount
+                    },
+                    callback: function(pr) {
+                      if (pr.message && (pr.message.status === "Partly Paid" || pr.message.status === "Paid")) {
+                        frappe.msgprint("✅ Partial payment recorded!");
+                        document.getElementById('partial-payment-modal').style.display = 'none';
+                        location.reload();
+                      } else {
+                        frappe.msgprint(__("Could not apply partial payment"));
+                      }
+                    }
+                  });
+                };
+              } else {
+                frappe.msgprint("{{ _('No partial MoMo payment candidate found.') }}");
+              }
+            }
+          });
+        };
+      }
     });
-    </script>
+  </script>
 {% endblock %}

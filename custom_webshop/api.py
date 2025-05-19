@@ -1,6 +1,7 @@
 import json
 import frappe
 import re
+from frappe import _
 from frappe.utils import cint
 from frappe.utils import nowdate
 from frappe.utils import get_fullname
@@ -10,6 +11,9 @@ from webshop.webshop.product_data_engine.query import ProductQuery
 from webshop.webshop.doctype.override_doctype.item_group import get_child_groups_for_website
 from webshop.webshop.shopping_cart.cart import update_cart as original_update_cart
 from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
+from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note as _make_dn
+from erpnext.selling.doctype.sales_order.sales_order import make_sales_invoice
+from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
 
 @frappe.whitelist(allow_guest=True)
 def get_product_filter_data(query_args=None):
@@ -444,3 +448,163 @@ def check_momo_payment(sales_order):
         "payment_entry": payment_entry.name,
         "sales_invoice": si.name
     }
+
+@frappe.whitelist(allow_guest=True)
+def make_delivery_note_from_portal(sales_order):
+    """
+    Map a submitted Sales Order to a Delivery Note, insert it, and return its name.
+    """
+    # 1) Build the Delivery Note doc
+    dn_doc = frappe.get_doc(_make_dn(sales_order))
+    # 2) Insert & submit (or just insert, depending on your workflow)
+    dn_doc.insert(ignore_permissions=True)
+    dn_doc.submit() 
+    # 3) Return its name so the client can redirect
+    return {"name": dn_doc.name}
+
+@frappe.whitelist()
+def make_invoice_from_portal(sales_order):
+    """Create a sales invoice from a submitted sales order."""
+    so = frappe.get_doc("Sales Order", sales_order)
+    if so.docstatus != 1:
+        frappe.throw("Sales Order must be submitted")
+    # Only create if there is not already an invoice
+    if frappe.db.exists("Sales Invoice Item", {"sales_order": sales_order}):
+        frappe.throw("Invoice already exists for this Sales Order.")
+    si = make_sales_invoice(sales_order)
+    si.insert(ignore_permissions=True)
+    si.submit()
+    return {"name": si.name}
+
+@frappe.whitelist()
+def make_delivery_note_from_portal(sales_order):
+    """Map a submitted Sales Order to a Delivery Note, insert and submit it."""
+    from erpnext.selling.doctype.sales_order.sales_order import make_delivery_note
+    dn = make_delivery_note(sales_order)
+    dn.insert(ignore_permissions=True)
+    dn.submit()
+    return {"name": dn.name}
+
+import frappe
+from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+
+@frappe.whitelist()
+def check_momo_payment_on_invoice(sales_invoice):
+    invoice = frappe.get_doc("Sales Invoice", sales_invoice)
+    if invoice.docstatus != 1:
+        return {"status": "Invoice not submitted."}
+    customer_name = invoice.customer_name.strip().lower()
+    last_digits = invoice.contact_mobile[-3:] if invoice.contact_mobile else None
+
+    # 1. Only match an unused exact transaction
+    txn = frappe.db.sql("""
+        SELECT name, transaction_id, transaction_datetime, amount
+        FROM `tabMoMo Transaction`
+        WHERE amount = %s
+          AND LOWER(sender_name) LIKE %s
+          AND sender_last_digits = %s
+          AND transaction_id NOT IN (
+            SELECT reference_no FROM `tabPayment Entry`
+            WHERE reference_no IS NOT NULL
+          )
+        ORDER BY transaction_datetime DESC
+        LIMIT 1
+    """, (invoice.outstanding_amount, f"%{customer_name}%", last_digits), as_dict=True)
+    if txn:
+        txn = txn[0]
+        # Payment entry logic (as before)
+        from erpnext.accounts.doctype.payment_entry.payment_entry import get_payment_entry
+        payment_entry = get_payment_entry("Sales Invoice", invoice.name, party_amount=invoice.outstanding_amount)
+        payment_entry.reference_no = txn.transaction_id
+        payment_entry.reference_date = txn.transaction_datetime
+        payment_entry.paid_amount = invoice.outstanding_amount
+        payment_entry.received_amount = invoice.outstanding_amount
+        if payment_entry.references:
+            payment_entry.references[0].allocated_amount = invoice.outstanding_amount
+        payment_entry.insert(ignore_permissions=True)
+        payment_entry.submit()
+        return {
+            "status": "Paid",
+            "transaction_id": txn.transaction_id,
+            "payment_entry": payment_entry.name,
+            "sales_invoice": invoice.name
+        }
+    return {"status": "Pending"}
+
+@frappe.whitelist()
+def create_partial_payment_on_invoice(sales_invoice, momo_transaction_id, amount):
+    invoice = frappe.get_doc("Sales Invoice", sales_invoice)
+    if invoice.docstatus != 1:
+        return {"status": "Invoice not submitted."}
+
+    amount = float(amount)
+
+    # Check if this payment has already been made (by reference)
+    exists = frappe.db.exists("Payment Entry Reference", {
+        "reference_doctype": "Sales Invoice",
+        "reference_name": sales_invoice,
+        "allocated_amount": amount
+    })
+    if exists:
+        return {"status": "Paid", "message": "This partial payment has already been processed."}
+
+    momo = frappe.get_doc("MoMo Transaction", {"transaction_id": momo_transaction_id})
+    payment_entry = get_payment_entry("Sales Invoice", invoice.name, party_amount=amount)
+    payment_entry.reference_no = momo.transaction_id
+    payment_entry.reference_date = momo.transaction_datetime
+    payment_entry.paid_amount = amount
+    payment_entry.received_amount = amount
+    # Update reference allocation
+    if payment_entry.references:
+        payment_entry.references[0].allocated_amount = amount
+    payment_entry.insert(ignore_permissions=True)
+    payment_entry.submit()
+
+    return {
+        "status": "Paid",
+        "payment_entry": payment_entry.name,
+        "sales_invoice": invoice.name,
+        "message": f"Partial payment of {amount} RWF recorded (TxID: {momo.transaction_id})"
+    }
+
+@frappe.whitelist()
+def find_partial_momo_payment(sales_invoice):
+    invoice = frappe.get_doc("Sales Invoice", sales_invoice)
+    customer_name = invoice.customer_name.strip().lower()
+    last_digits = invoice.contact_mobile[-3:] if invoice.contact_mobile else None
+
+    partial_txn = frappe.db.sql("""
+        SELECT name, transaction_id, transaction_datetime, amount
+        FROM `tabMoMo Transaction`
+        WHERE DATE(transaction_datetime) = %s
+          AND LOWER(sender_name) LIKE %s
+          AND sender_last_digits = %s
+          AND amount <= %s
+          AND transaction_id NOT IN (
+            SELECT reference_no
+            FROM `tabPayment Entry`
+            WHERE reference_no IS NOT NULL
+          )
+        ORDER BY transaction_datetime DESC
+        LIMIT 1
+    """, (
+        invoice.posting_date,
+        f"%{customer_name}%",
+        last_digits,
+        invoice.outstanding_amount
+    ), as_dict=True)
+
+    if partial_txn:
+        t = partial_txn[0]
+        return {
+            "status": "PartialMatch",
+            "transaction_id": t.transaction_id,
+            "amount": t.amount,
+            "transaction_datetime": t.transaction_datetime
+        }
+
+    return {"status": "NotFound"}
+
+@frappe.whitelist()
+def apply_partial_momo_payment(sales_invoice, momo_transaction_id, amount):
+    return create_partial_payment_on_invoice(sales_invoice, momo_transaction_id, amount)
